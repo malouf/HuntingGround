@@ -1,0 +1,13 @@
+[gd_resource type="Resource" script_class="AttackDefinition" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/attack_definition.gd" id="1_attack"]
+
+[resource]
+script = ExtResource("1_attack")
+attack_id = "back_cut"
+display_name = "Back Cut"
+damage = 18.0
+fatigue_cost = 16.0
+recovery = 0.38
+hitbox_size = Vector3(2.2, 1.4, 2.4)
+notes = "Wide cut with lower damage and faster recovery."

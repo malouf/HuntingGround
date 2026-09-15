@@ -1,0 +1,10 @@
+[gd_scene format=3 uid="uid://cdmyhs4w0yv4m"]
+
+[ext_resource type="Script" uid="uid://cnpp5fej6rhrn" path="res://scripts/main.gd" id="1"]
+
+[node name="HuntingGround" type="Node3D" unique_id=1051682787]
+script = ExtResource("1")
+
+[node name="WorldRoot" type="Node3D" parent="." unique_id=675638063]
+
+[node name="InterfaceRoot" type="CanvasLayer" parent="." unique_id=150057053]

@@ -1,0 +1,13 @@
+[gd_resource type="Resource" script_class="AttackDefinition" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/attack_definition.gd" id="1_attack"]
+
+[resource]
+script = ExtResource("1_attack")
+attack_id = "flurry"
+display_name = "Flurry"
+damage = 68.0
+fatigue_cost = 34.0
+recovery = 0.9
+hitbox_size = Vector3(2.7, 1.4, 3.9)
+notes = "Five committed cuts. Strong reward and severe recovery risk."

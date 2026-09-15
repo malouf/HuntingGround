@@ -1,0 +1,12 @@
+[gd_scene format=3]
+
+[node name="Arena" type="Node3D"]
+
+[node name="PlayerSpawn" type="Marker3D" parent="."]
+position = Vector3(0, 0.9, 5)
+
+[node name="BossSpawn" type="Marker3D" parent="."]
+position = Vector3(0, 1.1, -4)
+
+[node name="CameraAnchor" type="Marker3D" parent="."]
+position = Vector3(0, 1.6, 5.5)
