@@ -4,13 +4,8 @@ const Joystick = preload("res://scripts/joystick.gd")
 const CameraTouchArea = preload("res://scripts/camera_touch_area.gd")
 const MultiTouchGestureRouter = preload("res://scripts/multi_touch_gesture_router.gd")
 const ArrowScene = preload("res://scenes/weapons/arrow.tscn")
-const SlashLeft = preload("res://resources/weapons/slash_left.tres")
-const SlashRight = preload("res://resources/weapons/slash_right.tres")
-const BackCut = preload("res://resources/weapons/back_cut.tres")
-const Thrust = preload("res://resources/weapons/thrust.tres")
-const Parry = preload("res://resources/weapons/parry.tres")
-const Flurry = preload("res://resources/weapons/flurry.tres")
-const Whirlwind = preload("res://resources/weapons/whirlwind.tres")
+const SwordController = preload("res://scripts/combat/sword_controller.gd")
+const HunterSword = preload("res://resources/weapons/hunter_sword.tres")
 const PLAYER_SPEED := 4.2
 const PLAYER_TURN_SPEED := deg_to_rad(240.0)
 const DODGE_SPEED := 11.0
@@ -45,6 +40,9 @@ var multi_touch_router: Control
 var bow_state_label: Label
 var item_label: Label
 var element_label: Label
+var sword_controller: Node
+var chain_pips: Array[ColorRect] = []
+var chain_label: Label
 var selected_weapon := "sword"
 var bow_charging := false
 var bow_charge := 0.0
@@ -59,12 +57,6 @@ var player_health := MAX_HEALTH
 var player_fatigue := MAX_FATIGUE
 var boss_health := 160.0
 var attack_timer := 0.0
-var combo_step := 0
-var combo_timer := 0.0
-var combo_buffer_timer := 0.0
-var combo_inputs: Array[String] = []
-var last_technique := ""
-var repeated_technique_count := 0
 var dodge_direction := Vector3.ZERO
 var facing_direction := Vector3(0, 0, -1)
 var dodge_timer := 0.0
@@ -81,12 +73,42 @@ var camera_touch := false
 var camera_touch_id := -1
 var camera_last_position := Vector2.ZERO
 var save_path := "user://hunting_ground_save.json"
+const TEMPO_CONFIG_PATH := "res://resources/config/tempo_config.json"
+var fatigue_regen := 13.0
 
 func _ready() -> void:
 	world_root = get_node("WorldRoot")
 	interface_root = get_node("InterfaceRoot")
+	_load_tempo_config()
 	load_progress()
 	build_hub()
+
+## Loads the global rhythm tuning from resources/config/tempo_config.json.
+## Missing file or keys fall back to the TempoChain static defaults.
+func _load_tempo_config() -> void:
+	if not FileAccess.file_exists(TEMPO_CONFIG_PATH):
+		return
+	var file := FileAccess.open(TEMPO_CONFIG_PATH, FileAccess.READ)
+	if file == null:
+		return
+	var parsed = JSON.parse_string(file.get_as_text())
+	if parsed == null or not parsed is Dictionary:
+		push_warning("TEMPO CONFIG: invalid JSON, using defaults")
+		return
+	TempoChain.early_grace = _config_number(parsed, "early_grace", TempoChain.early_grace)
+	TempoChain.late_grace = _config_number(parsed, "late_grace", TempoChain.late_grace)
+	TempoChain.input_cooldown = _config_number(parsed, "input_cooldown", TempoChain.input_cooldown)
+	TempoChain.stagger_time = _config_number(parsed, "stagger_time", TempoChain.stagger_time)
+	TempoChain.lapse_time = _config_number(parsed, "lapse_time", TempoChain.lapse_time)
+	TempoChain.yellow_fraction = _config_number(parsed, "yellow_fraction", TempoChain.yellow_fraction)
+	TempoChain.weak_before = _config_number(parsed, "weak_before", TempoChain.weak_before)
+	TempoChain.quick_scale = _config_number(parsed, "quick_scale", TempoChain.quick_scale)
+	fatigue_regen = _config_number(parsed, "fatigue_regen", fatigue_regen)
+	print("TEMPO CONFIG: loaded from tempo_config.json")
+
+func _config_number(config: Dictionary, key: String, fallback: float) -> float:
+	var value = config.get(key)
+	return float(value) if value is float or value is int else fallback
 
 func build_hub() -> void:
 	screen = "hub"
@@ -125,7 +147,7 @@ func build_loadout() -> void:
 	title.position = Vector2(38, 50)
 	title.size = Vector2(640, 55)
 	menu.add_child(title)
-	var info := make_label("WEAPON 01  •  HUNTER'S SWORD\nDirectional cuts, branch combos, parry, and whirlwinds.\nWEAPON 02  •  HUNTER'S BOW\nHold DOWN to charge; LEFT/RIGHT quick dodge shots; UP bow bash.", 19, Color("#d1ddd6"))
+	var info := make_label("WEAPON 01  •  HUNTER'S SWORD\nTempo chain: catch the yellow beat, 3rd input is always a finisher.\nWEAPON 02  •  HUNTER'S BOW\nHold DOWN to charge; LEFT/RIGHT quick dodge shots; UP bow bash.", 19, Color("#d1ddd6"))
 	info.position = Vector2(42, 690)
 	info.size = Vector2(620, 190)
 	menu.add_child(info)
@@ -165,6 +187,9 @@ func start_fight() -> void:
 	bow_shot_count = 0
 	nocked_arrow = null
 	boss_damage_flash_timer = 0.0
+	if sword_controller:
+		sword_controller.queue_free()
+		sword_controller = null
 	clear_world()
 	clear_ui()
 	build_fight_world()
@@ -196,6 +221,11 @@ func build_fight_world() -> void:
 	camera.look_at(player.global_position + Vector3(0, 1.0, 0), Vector3.UP)
 	camera.current = true
 	make_fight_ui()
+	if selected_weapon == "sword":
+		sword_controller = SwordController.new()
+		sword_controller.setup(self, HunterSword, player, boss)
+		sword_controller.status_message.connect(set_status)
+		add_child(sword_controller)
 
 func make_environment(root: Node3D, color: Color) -> void:
 	var world := WorldEnvironment.new()
@@ -332,6 +362,27 @@ func make_fight_ui() -> void:
 	right_stick.changed.connect(_on_right_stick)
 	right_stick.gesture_released.connect(_on_right_gesture_released)
 	hud.add_child(right_stick)
+	chain_pips.clear()
+	var chain_title := make_label("CHAIN", 12, Color("#93a89e"))
+	chain_title.position = Vector2(486, 912)
+	chain_title.size = Vector2(210, 16)
+	chain_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	chain_title.visible = selected_weapon == "sword"
+	hud.add_child(chain_title)
+	for pip_index in 3:
+		var pip := ColorRect.new()
+		pip.position = Vector2(499 + pip_index * 64, 930)
+		pip.size = Vector2(56, 12)
+		pip.color = Color("#39463f")
+		pip.visible = selected_weapon == "sword"
+		hud.add_child(pip)
+		chain_pips.append(pip)
+	chain_label = make_label("", 13, Color("#d1ddd6"))
+	chain_label.position = Vector2(486, 946)
+	chain_label.size = Vector2(210, 20)
+	chain_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	chain_label.visible = selected_weapon == "sword"
+	hud.add_child(chain_label)
 	var dodge := make_button("DODGE", Vector2(535, 835), Vector2(150, 70))
 	dodge.pressed.connect(dodge_player)
 	hud.add_child(dodge)
@@ -342,7 +393,10 @@ func make_fight_ui() -> void:
 	pause_button.pressed.connect(toggle_pause)
 	hud.add_child(pause_button)
 	make_pause_menu()
-	status_label.text = "SWORD READY  •  RELEASE RIGHT STICK TO ATTACK"
+	if selected_weapon == "sword":
+		set_status("SWORD READY • START THE TEMPO CHAIN")
+	else:
+		set_status("BOW READY • HOLD DOWN TO CHARGE")
 
 func make_pause_menu() -> void:
 	pause_overlay = Control.new()
@@ -365,7 +419,7 @@ func make_pause_menu() -> void:
 	title.size = Vector2(620, 60)
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	pause_overlay.add_child(title)
-	var combo_text := "SWORD COMBO LIST\\n\\nLEFT / RIGHT  •  SLASH\\nUP  •  THRUST\\nDOWN  •  BACK CUT\\n\\nL → R → U → U  •  FLURRY\\nD → U  •  PARRY\\nD → D  •  BACKWARD DODGE\\nD → L / R  •  SIDE STEP\\nCIRCLE CW / CCW  •  WHIRLWIND\\n\\nRepeated techniques lose damage and cost more fatigue.\\nRelease within the combo window."
+	var combo_text := "SWORD TEMPO CHAIN\\n\\nEvery combo is ALWAYS 3 hits:\\nINPUT 1 (always normal) + INPUT 2 + FINISHER.\\nExample: LEFT + RIGHT + UP = full combo.\\n\\nCatch the tight YELLOW beat for CRITICAL hits.\\nA narrow band just before it chains a WEAK hit.\\nAnything further off = spam = STAGGER.\\nA 4th input during the finisher does nothing.\\n\\nYou cannot move while swinging or staggered.\\nFinishers unlock movement during their recovery.\\n\\nL / R  •  SLASH      U  •  THRUST      D  •  BACK CUT\\nCIRCLE  •  WHIRLWIND (any slot)\\n\\nFINISHER (3rd input):\\nUP  •  FLURRY      L / R  •  HEAVY SLASH\\nDOWN  •  BACK STEP (invulnerable)      CIRCLE  •  HEAVY WHIRLWIND\\n\\nKeyboard: J K SPACE ; attack • SHIFT dodge • L lock"
 	if selected_weapon == "bow":
 		combo_text = "BOW COMBO LIST\\n\\nHOLD DOWN  •  CHARGE + RELEASE\\nTHIRD CHARGED SHOT  •  FINISHER\\nLEFT / RIGHT  •  QUICK SHOT + DODGE\\nUP  •  BOW BASH\\n\\nTwo-finger vertical swipe  •  ITEMS\\nTwo-finger horizontal swipe  •  ELEMENTS"
 	var combos := make_label(combo_text, 18, Color("#d1ddd6"))
@@ -399,9 +453,11 @@ func toggle_pause() -> void:
 	pause_overlay.visible = paused
 	pause_button.text = "CLOSE" if paused else "PAUSE"
 	if paused:
-		status_label.text = "PAUSED  •  COMBO LIST AND DEBUG CONTROLS OPEN"
+		set_status("PAUSED • COMBO LIST AND DEBUG CONTROLS OPEN")
+	elif selected_weapon == "sword":
+		set_status("SWORD READY • START THE TEMPO CHAIN")
 	else:
-		status_label.text = "SWORD READY  •  RELEASE RIGHT STICK TO ATTACK"
+		set_status("BOW READY • HOLD DOWN TO CHARGE")
 
 func toggle_debug_boxes() -> void:
 	debug_boxes_visible = not debug_boxes_visible
@@ -487,21 +543,24 @@ func clear_ui() -> void:
 	status_label.position = Vector2(34, 1228)
 	status_label.size = Vector2(650, 30)
 	hud.add_child(status_label)
+	chain_label = null
 
 func _process(delta: float) -> void:
 	if screen != "fight" or not is_instance_valid(player) or not is_instance_valid(boss) or paused:
 		return
 	attack_timer = maxf(0.0, attack_timer - delta)
-	combo_timer = maxf(0.0, combo_timer - delta)
-	combo_buffer_timer = maxf(0.0, combo_buffer_timer - delta)
-	if combo_buffer_timer <= 0.0:
-		combo_inputs.clear()
-		last_technique = ""
-		repeated_technique_count = 0
 	dodge_timer = maxf(0.0, dodge_timer - delta)
 	invulnerable_timer = maxf(0.0, invulnerable_timer - delta)
 	boss_telegraph_timer = maxf(0.0, boss_telegraph_timer - delta)
-	player_fatigue = minf(MAX_FATIGUE, player_fatigue + delta * 13.0)
+	player_fatigue = minf(MAX_FATIGUE, player_fatigue + delta * fatigue_regen)
+	if selected_weapon == "sword" and sword_controller:
+		sword_controller.process_weapon(delta)
+		var ring_ratio: float = sword_controller.tempo.window_remaining_ratio()
+		var ring_zone: String = sword_controller.tempo.current_zone() if ring_ratio >= 0.0 else ""
+		_refresh_chain_pips(sword_controller.tempo, ring_zone)
+		_refresh_chain_label(sword_controller.tempo)
+		if right_stick:
+			right_stick.set_link_window(ring_ratio >= 0.0, ring_ratio, ring_zone)
 	if selected_weapon == "bow" and bow_charging:
 		bow_charge = minf(1.0, bow_charge + delta / 1.4)
 		update_bow_aim(delta)
@@ -512,12 +571,6 @@ func _process(delta: float) -> void:
 		update_boss(delta)
 	update_camera(delta)
 	update_bars()
-	if Input.is_action_just_pressed("attack"):
-		perform_attack(Vector2.UP)
-	if Input.is_action_just_pressed("dodge"):
-		dodge_player()
-	if Input.is_action_just_pressed("lock_on"):
-		toggle_lock()
 	if health_bar:
 		health_bar.value = player_health
 	if fatigue_bar:
@@ -566,12 +619,17 @@ func move_player(delta: float) -> void:
 		var dodge_vector := dodge_direction if dodge_direction.length() > 0.1 else -player.global_transform.basis.z
 		player.velocity = dodge_vector.normalized() * DODGE_SPEED
 	else:
-		var attack_move_multiplier := 0.35 if attack_timer > 0.0 else 1.0
+		var attack_move_multiplier := 1.0
+		if selected_weapon == "sword" and sword_controller and sword_controller.movement_locked():
+			attack_move_multiplier = 0.0
+		elif attack_timer > 0.0:
+			attack_move_multiplier = 0.35
 		player.velocity = direction * PLAYER_SPEED * attack_move_multiplier
 	player.move_and_slide()
 	player.position.x = clampf(player.position.x, -8.5, 8.5)
 	player.position.z = clampf(player.position.z, -8.5, 8.5)
-	if direction.length() > 0.1 and dodge_timer <= 0.0 and attack_timer <= 0.0:
+	var sword_rooted: bool = selected_weapon == "sword" and sword_controller != null and sword_controller.movement_locked()
+	if direction.length() > 0.1 and dodge_timer <= 0.0 and attack_timer <= 0.0 and not sword_rooted:
 		var desired_yaw := atan2(-direction.x, -direction.z)
 		player.rotation.y = rotate_toward(player.rotation.y, desired_yaw, PLAYER_TURN_SPEED * delta)
 		facing_direction = -player.global_transform.basis.z
@@ -596,7 +654,7 @@ func update_boss(delta: float) -> void:
 		boss_attacking = false
 		if distance < 3.0 and invulnerable_timer <= 0.0:
 			player_health -= 18.0
-			status_label.text = "HIT  •  DODGE THROUGH THE ATTACK"
+			set_status("HIT • DODGE THROUGH THE ATTACK")
 
 func update_camera(delta: float) -> void:
 	if not camera or not player:
@@ -676,10 +734,8 @@ func update_bow_aim(delta: float) -> void:
 func _on_right_gesture_released(value: Vector2, gesture: String, clockwise: bool) -> void:
 	if selected_weapon == "bow":
 		handle_bow_release(value, gesture)
-	elif gesture == "circle":
-		perform_whirlwind(clockwise)
-	elif value.length() > 0.32:
-		perform_attack(value)
+	elif sword_controller:
+		sword_controller.on_gesture(value, gesture, clockwise)
 
 func handle_bow_release(value: Vector2, gesture: String) -> void:
 	if gesture == "circle":
@@ -775,112 +831,107 @@ func _on_two_finger_swipe(axis: String, direction: int) -> void:
 		element_label.text = "ARROW  •  %s" % bow_element
 		status_label.text = "ELEMENTAL ARROW  •  %s" % bow_element
 
-func technique_from_input(direction: Vector2) -> String:
-	if absf(direction.x) > absf(direction.y):
-		return "R" if direction.x > 0.0 else "L"
-	return "U" if direction.y < 0.0 else "D"
+## Combat helpers used by the weapon controllers.
 
-func perform_attack(direction: Vector2) -> void:
-	if not is_instance_valid(player) or not player.is_inside_tree() or not is_instance_valid(boss) or not boss.is_inside_tree():
-		return
-	if attack_timer > 0.0 or player_fatigue < 12.0:
-		status_label.text = "TOO TIRED  •  RECOVER BEFORE ATTACKING"
-		return
-	var technique := technique_from_input(direction)
-	if technique == last_technique:
-		repeated_technique_count += 1
-	else:
-		repeated_technique_count = 1
-	last_technique = technique
-	if combo_buffer_timer <= 0.0:
-		combo_inputs.clear()
-	combo_inputs.append(technique)
-	if combo_inputs.size() > 4:
-		combo_inputs.pop_front()
-	combo_buffer_timer = 0.85
-	var sequence := ",".join(combo_inputs)
-	if sequence == "D,U":
-		perform_parry()
-		return
-	if sequence == "D,D" or sequence == "D,L" or sequence == "D,R":
-		perform_defensive_step(sequence)
-		return
-	if sequence == "L,R,U,U":
-		perform_flurry()
-		return
-	combo_step = min(combo_inputs.size(), 3)
-	combo_timer = 0.72
-	var attack_name := "LEFT SLASH" if technique == "L" else ("RIGHT SLASH" if technique == "R" else ("FORWARD THRUST" if technique == "U" else "BACK CUT"))
-	var attack_data: AttackDefinition = SlashLeft if technique == "L" else (SlashRight if technique == "R" else (Thrust if technique == "U" else BackCut))
-	var falloff := maxf(0.4, 1.0 - maxf(0.0, float(repeated_technique_count - 1)) * 0.16)
-	var damage := attack_data.damage * falloff
-	var fatigue_cost := attack_data.fatigue_cost * (1.0 + maxf(0.0, float(repeated_technique_count - 1)) * 0.12)
-	attack_timer = attack_data.recovery
-	player_fatigue -= fatigue_cost
-	status_label.text = "SWORD  •  %s  •  INPUT %s  •  FALL-OFF %.0f%%" % [attack_name, sequence, falloff * 100.0]
-	var effective_direction := facing_direction
-	animate_sword_attack(direction)
-	show_attack_hitbox(effective_direction, combo_step)
-	var distance := player.global_position.distance_to(boss.global_position)
-	if distance < 3.0 and effective_direction.dot(player.global_position.direction_to(boss.global_position)) > -0.35:
-		boss_health -= damage
-		boss.position += player.global_position.direction_to(boss.global_position) * 0.25
-		update_boss_phase()
+func set_status(text_value: String) -> void:
+	if status_label:
+		status_label.text = text_value
 
-func perform_defensive_step(sequence: String) -> void:
-	combo_inputs.clear()
-	combo_buffer_timer = 0.0
-	attack_timer = 0.32
-	player_fatigue -= 14.0 if sequence == "D,D" else 18.0
-	dodge_direction = -facing_direction if sequence == "D,D" else (Vector3(-facing_direction.z, 0, facing_direction.x) if sequence == "D,R" else Vector3(facing_direction.z, 0, -facing_direction.x))
+func can_pay(cost: float) -> bool:
+	return player_fatigue >= cost
+
+func pay_fatigue(cost: float) -> void:
+	player_fatigue = maxf(0.0, player_fatigue - cost)
+
+func boss_distance() -> float:
+	if not is_instance_valid(player) or not is_instance_valid(boss):
+		return 999.0
+	return player.global_position.distance_to(boss.global_position)
+
+func boss_in_front() -> bool:
+	if not is_instance_valid(player) or not is_instance_valid(boss):
+		return false
+	return facing_direction.dot(player.global_position.direction_to(boss.global_position)) > -0.35
+
+func deal_boss_damage(amount: float, push := 0.25) -> void:
+	if not is_instance_valid(player) or not is_instance_valid(boss):
+		return
+	boss_health -= amount
+	boss.position += player.global_position.direction_to(boss.global_position) * push
+	update_boss_phase()
+
+## Trip finisher: staggers the boss and interrupts a committed strike.
+func apply_trip() -> void:
+	if not is_instance_valid(boss):
+		return
+	boss_attacking = false
+	boss_telegraph_timer = 0.0
+	boss_attack_timer = maxf(boss_attack_timer, 2.2)
+	set_status("TRIPPED • GRAVE BRUTE STAGGERS")
+
+func defensive_step(step: String) -> void:
+	dodge_direction = -facing_direction if step == "back" else (Vector3(-facing_direction.z, 0, facing_direction.x) if step == "right" else Vector3(facing_direction.z, 0, -facing_direction.x))
 	dodge_timer = 0.24
 	invulnerable_timer = 0.42
-	status_label.text = "DEFENSIVE STEP  •  %s  •  INVULNERABLE" % sequence
 
-func perform_parry() -> void:
-	combo_inputs.clear()
-	combo_buffer_timer = 0.0
-	attack_timer = Parry.recovery
-	player_fatigue -= Parry.fatigue_cost
-	status_label.text = "PARRY  •  HOLD YOUR GROUND"
-	var parry_direction := -player.global_transform.basis.z
-	show_attack_hitbox(parry_direction, 2)
-	if boss_attacking and boss_telegraph_timer > 0.0:
-		boss_health -= Parry.damage
-		boss_attacking = false
-		boss_telegraph_timer = 0.0
-		boss_attack_timer = 2.0
-		status_label.text = "PARRY SUCCESS  •  COUNTER DAMAGE"
-		update_boss_phase()
-	else:
-		player_health -= 12.0
-		status_label.text = "PARRY MISSED  •  COMMITTED TOO EARLY OR LATE"
-
-func perform_flurry() -> void:
-	combo_inputs.clear()
-	combo_buffer_timer = 0.0
-	attack_timer = Flurry.recovery
-	player_fatigue -= Flurry.fatigue_cost
-	status_label.text = "FLURRY  •  L R U U  •  FIVE CUTS"
-	var effective_direction := facing_direction
-	animate_sword_attack(Vector2.RIGHT)
-	show_attack_hitbox(effective_direction, 5)
-	if player.global_position.distance_to(boss.global_position) < 3.2:
-		boss_health -= Flurry.damage
-		boss.position += player.global_position.direction_to(boss.global_position) * 0.45
-		update_boss_phase()
-
-func perform_whirlwind(clockwise: bool) -> void:
-	if attack_timer > 0.0 or player_fatigue < Whirlwind.fatigue_cost:
-		status_label.text = "TOO TIRED  •  WHIRLWIND NEEDS %d FATIGUE" % Whirlwind.fatigue_cost
+func _refresh_chain_label(chain: TempoChain) -> void:
+	if chain_label == null:
 		return
-	attack_timer = Whirlwind.recovery
-	player_fatigue -= Whirlwind.fatigue_cost
-	status_label.text = "WHIRLWIND  •  %s" % ("CLOCKWISE" if clockwise else "COUNTER-CLOCKWISE")
-	show_whirlwind_hitbox(clockwise)
-	if player.global_position.distance_to(boss.global_position) < 3.5:
-		boss_health -= Whirlwind.damage
-		update_boss_phase()
+	if chain.staggered():
+		chain_label.text = "STAGGERED"
+		chain_label.add_theme_color_override("font_color", Color("#c0503f"))
+		return
+	if not chain.is_busy():
+		chain_label.text = ""
+		return
+	var text := "CHAIN %d/3" % chain.slot()
+	var color := Color("#d1ddd6")
+	if chain.tier == TempoChain.TIER_JUST:
+		text += " • CRITICAL"
+		color = Color("#ffd24a")
+	elif chain.tier == TempoChain.TIER_QUICK:
+		text += " • WEAK"
+		color = Color("#8a9a92")
+	chain_label.text = text
+	chain_label.add_theme_color_override("font_color", color)
+
+## Floating hit-quality feedback above the boss ("CRITICAL" / "WEAK").
+func spawn_hit_popup(quality: String) -> void:
+	if quality == "" or not is_instance_valid(boss) or not boss.get_parent():
+		return
+	var popup := Label3D.new()
+	popup.text = quality
+	popup.font_size = 128
+	popup.outline_size = 30
+	popup.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	popup.no_depth_test = true
+	popup.modulate = Color("#ffd24a") if quality == "CRITICAL" else Color(0.62, 0.72, 0.68)
+	boss.get_parent().add_child(popup)
+	popup.global_position = boss.global_position + Vector3(randf_range(-0.35, 0.35), 2.9, 0)
+	var tween := create_tween()
+	tween.tween_property(popup, "global_position", popup.global_position + Vector3(0, 0.65, 0), 0.55)
+	tween.parallel().tween_property(popup, "modulate:a", 0.0, 0.55)
+	tween.tween_callback(popup.queue_free)
+
+func _refresh_chain_pips(chain: TempoChain, zone: String) -> void:
+	if chain_pips.is_empty():
+		return
+	var ticks := int(Time.get_ticks_msec() / 140)
+	var hot: bool = zone != "" and zone != "stagger" and ticks % 2 == 0
+	var blink_red: bool = int(Time.get_ticks_msec() / 120) % 2 == 0
+	# The 3 pips map to the combo's 3 swings. Pip 1 lights as soon as input 1
+	# starts the combo; the pip after the last landed swing pulses while the
+	# player can chain (gray = weak band, gold = critical beat).
+	var lit := chain.slot() if chain.is_busy() else 0
+	for index in chain_pips.size():
+		var color := Color("#39463f")
+		if chain.staggered():
+			color = Color("#c0503f") if blink_red else Color("#7a2f26")
+		elif index < lit:
+			color = Color("#d3ad55")
+		elif index == lit and hot:
+			color = Color("#ffe08a") if zone == "critical" else Color("#8a9a92")
+		chain_pips[index].color = color
 
 func show_whirlwind_hitbox(clockwise: bool) -> void:
 	if not is_instance_valid(player) or not player.is_inside_tree() or not player.get_parent():
@@ -962,11 +1013,20 @@ func show_attack_hitbox(direction: Vector3, combo_index: int) -> void:
 func dodge_player() -> void:
 	if dodge_timer > 0.0 or player_fatigue < 20.0:
 		return
+	if sword_controller and sword_controller.is_staggered():
+		set_status("STAGGERED • NO DODGING")
+		return
+	if sword_controller:
+		if sword_controller.is_committed():
+			set_status("LOCKED • FINISH THE SWING FIRST")
+			return
+		if sword_controller.is_recovering():
+			sword_controller.cancel_for_dodge()
 	dodge_direction = facing_direction
 	dodge_timer = 0.24
 	invulnerable_timer = 0.4
 	player_fatigue -= 20.0
-	status_label.text = "DODGE  •  INVULNERABLE"
+	set_status("DODGE • INVULNERABLE")
 
 func toggle_lock() -> void:
 	locked = not locked
@@ -975,6 +1035,9 @@ func toggle_lock() -> void:
 
 func finish_fight(victory: bool) -> void:
 	screen = "result"
+	if sword_controller:
+		sword_controller.queue_free()
+		sword_controller = null
 	if victory:
 		mark_boss_defeated()
 	clear_ui()
@@ -1014,9 +1077,16 @@ func _input(event: InputEvent) -> void:
 	if screen != "fight":
 		return
 	if event is InputEventKey and event.pressed and not event.echo:
-		if event.keycode == KEY_SPACE:
-			perform_attack(Vector2.UP)
-		elif event.keycode == KEY_SHIFT:
+		if selected_weapon == "sword" and sword_controller:
+			if event.keycode == KEY_SPACE:
+				sword_controller.request_technique("U")
+			elif event.keycode == KEY_J:
+				sword_controller.request_technique("L")
+			elif event.keycode == KEY_K:
+				sword_controller.request_technique("R")
+			elif event.keycode == KEY_SEMICOLON:
+				sword_controller.request_technique("D")
+		if event.keycode == KEY_SHIFT:
 			dodge_player()
 		elif event.keycode == KEY_L:
 			toggle_lock()

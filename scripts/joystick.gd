@@ -10,6 +10,10 @@ var active := false
 var pointer_id := -1
 var value := Vector2.ZERO
 var path_points: Array[Vector2] = []
+# Tempo chain link window: remaining ratio 0..1 (-1 hidden) and the zone the
+# swing is in right now ("stagger", "weak" or "critical").
+var link_ratio := -1.0
+var link_zone := ""
 
 func _ready() -> void:
 	custom_minimum_size = Vector2(radius * 2.0 + 20.0, radius * 2.0 + 20.0)
@@ -86,3 +90,27 @@ func _draw() -> void:
 	draw_circle(center, radius, tint)
 	draw_arc(center, radius, 0.0, TAU, 64, Color(0.55, 0.7, 0.72, 0.7), 3.0)
 	draw_circle(center + value * radius, knob_radius, Color(0.78, 0.87, 0.82, 0.92))
+	if link_ratio >= 0.0:
+		var remaining := TAU * clampf(link_ratio, 0.0, 1.0)
+		var arc_color := Color(0.7, 0.85, 0.85, 0.3)
+		var arc_width := 3.0
+		match link_zone:
+			"critical":
+				arc_color = Color(1.0, 0.83, 0.35, 0.95)
+				arc_width = 5.0
+			"weak":
+				arc_color = Color(0.65, 0.78, 0.8, 0.85)
+			_:
+				arc_color = Color(1.0, 0.42, 0.3, 0.6)
+		draw_arc(center, radius - 10.0, -PI / 2.0, -PI / 2.0 + remaining, 48, arc_color, arc_width)
+
+## Called by the fight each frame: shows the window ring colored by the zone
+## the swing is in right now (red = stagger/too early, gray = weak, gold =
+## critical), or hides it when no window is open.
+func set_link_window(show_ring: bool, ratio: float, zone: String) -> void:
+	var next_ratio := clampf(ratio, 0.0, 1.0) if show_ring else -1.0
+	if is_equal_approx(next_ratio, link_ratio) and (next_ratio < 0.0 or zone == link_zone):
+		return
+	link_ratio = next_ratio
+	link_zone = zone
+	queue_redraw()
