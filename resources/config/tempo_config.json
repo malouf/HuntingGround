@@ -1,0 +1,22 @@
+{
+	"_help": {
+		"early_grace": "Seconds BEFORE the yellow beat that still count as critical (touch fairness).",
+		"late_grace": "Seconds AFTER the yellow beat that still count as critical.",
+		"input_cooldown": "Seconds at the start of a swing during which presses are ignored (double-tap guard).",
+		"stagger_time": "Seconds of full lockout (no attack, no movement, no dodge) after spam or a dropped combo.",
+		"lapse_time": "Seconds after a swing before an unchained combo counts as dropped and staggers you.",
+		"yellow_fraction": "Size of the CRITICAL (gold) window as a fraction of the link window (0.25 = last quarter).",
+		"weak_before": "Seconds of WEAK (gray) band hugging the beat just before it. The rest of the early window is the STAGGER (red) zone. 0 disables weak hits.",
+		"quick_scale": "Damage multiplier for weak hits (1.0 = full damage, 0.6 = 60%).",
+		"fatigue_regen": "Fatigue points regenerated per second."
+	},
+	"early_grace": 0.06,
+	"late_grace": 0.06,
+	"input_cooldown": 0.08,
+	"stagger_time": 0.55,
+	"lapse_time": 0.4,
+	"yellow_fraction": 0.25,
+	"weak_before": 0.09,
+	"quick_scale": 0.6,
+	"fatigue_regen": 13.0
+}

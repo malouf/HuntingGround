@@ -1,0 +1,19 @@
+[gd_resource type="Resource" script_class="AttackDefinition" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/attack_definition.gd" id="1_attack"]
+
+[resource]
+script = ExtResource("1_attack")
+attack_id = "heavy_slash"
+display_name = "Heavy Slash"
+damage = 42.0
+fatigue_cost = 22.0
+recovery = 0.4
+hitbox_size = Vector3(2.4, 1.6, 3)
+windup = 0.25
+active = 0.1
+link_open = 99.0
+link_close = 99.0
+chains = false
+finisher_id = "heavy_slash"
+notes = "L / R finisher. One committed heavy cut with a strong push."
