@@ -1,0 +1,11 @@
+[gd_resource type="Resource" script_class="SkillDefinition" format=3]
+
+[ext_resource type="Script" path="res://scripts/skill_definition.gd" id="1_1pavp"]
+
+[resource]
+script = ExtResource("1_1pavp")
+skill_id = "back_step"
+display_name = "Back Step"
+duration = 0.45
+distance = 2.1
+animation_id = "back_step"

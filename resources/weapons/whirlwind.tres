@@ -1,20 +1,22 @@
-[gd_resource type="Resource" script_class="AttackDefinition" load_steps=2 format=3]
+[gd_resource type="Resource" script_class="AttackDefinition" format=3]
 
 [ext_resource type="Script" path="res://scripts/attack_definition.gd" id="1_attack"]
+[ext_resource type="Script" path="res://scripts/attack_follow_up.gd" id="1_xrdkt"]
+[ext_resource type="Script" path="res://scripts/attack_hit.gd" id="2_vwj1n"]
 
 [resource]
 script = ExtResource("1_attack")
 attack_id = "whirlwind"
 display_name = "Whirlwind"
+chain_stage = 2
 damage = 60.0
-fatigue_cost = 24.0
-recovery = 0.35
+fatigue_cost = 28.0
+recovery = 0.3208295810861659
 hitbox_size = Vector3(5, 1.5, 5)
-windup = 0.12
-active = 0.65
-link_open = 0.85
-link_close = 1.3
-chain_scale = Vector3(0.5, 0.75, 1)
-chains = true
-finisher_id = "whirlwind"
 notes = "Circle gesture in any slot. Weak early in the chain, heavy as the slot-3 finisher."
+windup = 0.08226865671641792
+active = 0.63
+link_open = 0.84
+link_close = 1.2584550303514734
+chain_scale = Vector3(0.5, 0.75, 1)
+animation_id = "whirlwind"

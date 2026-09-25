@@ -6,6 +6,7 @@ const MultiTouchGestureRouter = preload("res://scripts/multi_touch_gesture_route
 const ArrowScene = preload("res://scenes/weapons/arrow.tscn")
 const SwordController = preload("res://scripts/combat/sword_controller.gd")
 const HunterSword = preload("res://resources/weapons/hunter_sword.tres")
+const GraveBrute = preload("res://resources/bosses/grave_brute.tres")
 const PLAYER_SPEED := 4.2
 const PLAYER_TURN_SPEED := deg_to_rad(240.0)
 const DODGE_SPEED := 11.0
@@ -55,23 +56,31 @@ var stop_monster := false
 var debug_boxes_visible := true
 var player_health := MAX_HEALTH
 var player_fatigue := MAX_FATIGUE
+var boss_definition: BossDefinition = GraveBrute
 var boss_health := 160.0
 var attack_timer := 0.0
 var dodge_direction := Vector3.ZERO
 var facing_direction := Vector3(0, 0, -1)
 var dodge_timer := 0.0
 var invulnerable_timer := 0.0
-var boss_attack_timer := 2.2
-var boss_telegraph_timer := 0.0
-var boss_attacking := false
-var boss_phase := 0
-var boss_damage_flash_timer := 0.0
+var boss_controller: BossController
 var locked := false
 var camera_yaw := 0.0
 var camera_pitch := -0.22
 var camera_touch := false
 var camera_touch_id := -1
 var camera_last_position := Vector2.ZERO
+var debug_mode := false
+var debug_boss_label: Label
+var debug_freeze_button: Button
+var debug_stop_button: Button
+## Bench UI lives on its own layer above the HUD so the camera touch area and
+## joysticks (both Stop) cannot swallow its clicks.
+var bench_layer: CanvasLayer
+var bench_controls: Control
+## Bench-only boss attack hitbox visuals: drawn only while telegraphing/striking。
+var boss_hitbox: MeshInstance3D
+var boss_hitbox_stay :=	0.0
 var save_path := "user://hunting_ground_save.json"
 const TEMPO_CONFIG_PATH := "res://resources/config/tempo_config.json"
 var fatigue_regen := 13.0
@@ -81,7 +90,21 @@ func _ready() -> void:
 	interface_root = get_node("InterfaceRoot")
 	_load_tempo_config()
 	load_progress()
-	build_hub()
+	if Engine.has_meta("bench_boss"):
+		_enter_bench(Engine.get_meta("bench_boss"))
+	else:
+		build_hub()
+
+## The designer bench (scenes/designer_arena.tscn) jumps straight into a
+## fight with bench controls; the meta carries the boss file stem.
+func _enter_bench(boss_file: String) -> void:
+	var path := "res://resources/bosses/%s.tres" % boss_file
+	if ResourceLoader.exists(path):
+		boss_definition = load(path)
+	if Engine.has_meta("bench_weapon"):
+		selected_weapon = Engine.get_meta("bench_weapon")
+	debug_mode = true
+	start_fight()
 
 ## Loads the global rhythm tuning from resources/config/tempo_config.json.
 ## Missing file or keys fall back to the TempoChain static defaults.
@@ -180,16 +203,17 @@ func start_fight() -> void:
 	locked = false
 	player_health = MAX_HEALTH
 	player_fatigue = MAX_FATIGUE
-	boss_health = 160.0
-	boss_phase = 0
+	boss_health = boss_definition.max_health
 	bow_charging = false
 	bow_charge = 0.0
 	bow_shot_count = 0
 	nocked_arrow = null
-	boss_damage_flash_timer = 0.0
 	if sword_controller:
 		sword_controller.queue_free()
 		sword_controller = null
+	if boss_controller:
+		boss_controller.queue_free()
+		boss_controller = null
 	clear_world()
 	clear_ui()
 	build_fight_world()
@@ -206,9 +230,9 @@ func build_fight_world() -> void:
 	player_weapon = add_prop(player, Vector3(0.55, 0.1, -0.1), weapon_path, Vector3(0.55, 0.55, 0.55))
 	if player_weapon:
 		player_weapon.rotation_degrees = Vector3(0, 0, -45)
-	boss = make_actor("Grave Brute", Vector3(0, 1.1, -4.0), Color("#8d514d"), 1.55)
+	boss = make_actor(boss_definition.display_name, Vector3(0, 1.1, -4.0), boss_definition.phases[0].body_color, boss_definition.body_scale)
 	root.add_child(boss)
-	var boss_sword := add_prop(boss, Vector3(0.85, 0.2, -0.2), "res://scenes/weapons/sword.tscn", Vector3(0.9, 0.9, 0.9))
+	var boss_sword := add_prop(boss, Vector3(0.85, 0.2, -0.2), boss_definition.weapon_prop_path, Vector3(0.9, 0.9, 0.9))
 	if boss_sword:
 		boss_sword.rotation_degrees = Vector3(0, 0, -45)
 	camera_pivot = Node3D.new()
@@ -226,6 +250,88 @@ func build_fight_world() -> void:
 		sword_controller.setup(self, HunterSword, player, boss)
 		sword_controller.status_message.connect(set_status)
 		add_child(sword_controller)
+	boss_controller = BossController.new()
+	boss_controller.setup(self, boss_definition, boss, player)
+	add_child(boss_controller)
+	if debug_mode:
+		_build_bench_panel()
+
+## Right-side bench controls: HP jumps, force move, freeze, stop, exit.
+func _build_bench_panel() -> void:
+	# Fight HUD controls (camera_touch_area, joysticks) are Stop and sit above
+	# `menu`, so the bench gets its own higher layer and a full-rect Control
+	# that ignores the mouse itself (its buttons still take clicks).
+	if bench_layer:
+		bench_layer.queue_free()
+	bench_layer = CanvasLayer.new()
+	bench_layer.name = "BenchLayer"
+	bench_layer.layer = 2
+	add_child(bench_layer)
+	bench_controls = Control.new()
+	bench_controls.name = "BenchControls"
+	bench_controls.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	bench_controls.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	bench_layer.add_child(bench_controls)
+	var title := make_label("DESIGNER BENCH", 24, Color("#e8d6ad"))
+	title.position = Vector2(480, 200)
+	title.size = Vector2(220, 34)
+	bench_controls.add_child(title)
+	debug_boss_label = make_label("", 18, Color("#d1ddd6"))
+	debug_boss_label.position = Vector2(480, 236)
+	debug_boss_label.size = Vector2(220, 120)
+	debug_boss_label.autowrap_mode = TextServer.AUTOWRAP_WORD
+	bench_controls.add_child(debug_boss_label)
+	var hp_y := 278.0
+	for entry in [[0.66, "HP 66%"], [0.33, "HP 33%"], [0.01, "HP 1%"], [1.0, "HEAL BOSS"]]:
+		var hp_button := make_button(entry[1], Vector2(480, hp_y), Vector2(200, 52))
+		hp_y += 58.0
+		hp_button.pressed.connect(_bench_hp.bind(entry[0]))
+		bench_controls.add_child(hp_button)
+	var force_button := make_button("FORCE MOVE", Vector2(480, hp_y + 6), Vector2(200, 58))
+	force_button.pressed.connect(_bench_force_move)
+	bench_controls.add_child(force_button)
+	debug_freeze_button = make_button("FREEZE: OFF", Vector2(480, hp_y + 70), Vector2(200, 58))
+	debug_freeze_button.pressed.connect(_bench_toggle_freeze)
+	bench_controls.add_child(debug_freeze_button)
+	debug_stop_button = make_button("STOP MONSTER", Vector2(480, hp_y + 134), Vector2(200, 58))
+	debug_stop_button.pressed.connect(_bench_toggle_stop)
+	bench_controls.add_child(debug_stop_button)
+	var exit_button := make_button("BACK TO HUB", Vector2(480, hp_y + 198), Vector2(200, 58))
+	exit_button.pressed.connect(_bench_exit)
+	bench_controls.add_child(exit_button)
+
+func _bench_hp(fraction: float) -> void:
+	boss_health = boss_definition.max_health * fraction
+	boss_controller.refresh_phase()
+	set_status("BENCH  •  BOSS HP %d%%" % roundi(fraction * 100.0))
+
+func _bench_force_move() -> void:
+	if boss_controller:
+		boss_controller.force_move()
+
+func _bench_toggle_freeze() -> void:
+	if boss_controller:
+		boss_controller.frozen = not boss_controller.frozen
+		debug_freeze_button.text = "FREEZE: ON" if boss_controller.frozen else "FREEZE: OFF"
+
+func _bench_toggle_stop() -> void:
+	stop_monster = not stop_monster
+	debug_stop_button.text = "RESUME MONSTER" if stop_monster else "STOP MONSTER"
+
+## Leaves the bench: clears the meta so normal play returns to the hub flow.
+func _bench_exit() -> void:
+	Engine.remove_meta("bench_boss")
+	Engine.remove_meta("bench_weapon")
+	debug_mode = false
+	boss_definition = GraveBrute
+	if bench_layer:
+		bench_layer.queue_free()
+		bench_layer = null
+	bench_controls = null
+	debug_boss_label = null
+	debug_freeze_button = null
+	debug_stop_button = null
+	build_hub()
 
 func make_environment(root: Node3D, color: Color) -> void:
 	var world := WorldEnvironment.new()
@@ -245,8 +351,6 @@ func make_environment(root: Node3D, color: Color) -> void:
 	var floor_body := StaticBody3D.new()
 	var mesh := MeshInstance3D.new()
 	var plane := PlaneMesh.new()
-	plane.size = Vector2(22, 22)
-	mesh.mesh = plane
 	var material := StandardMaterial3D.new()
 	material.albedo_color = Color("#39463f")
 	material.roughness = 0.95
@@ -452,6 +556,8 @@ func toggle_pause() -> void:
 	paused = not paused
 	pause_overlay.visible = paused
 	pause_button.text = "CLOSE" if paused else "PAUSE"
+	if bench_layer:
+		bench_layer.visible = not paused
 	if paused:
 		set_status("PAUSED • COMBO LIST AND DEBUG CONTROLS OPEN")
 	elif selected_weapon == "sword":
@@ -480,7 +586,7 @@ func fill_resources() -> void:
 	update_bars()
 
 func reset_boss_health() -> void:
-	boss_health = 160.0
+	boss_health = boss_definition.max_health
 	status_label.text = "DEBUG  •  BOSS HEALTH RESET"
 	update_bars()
 
@@ -551,7 +657,6 @@ func _process(delta: float) -> void:
 	attack_timer = maxf(0.0, attack_timer - delta)
 	dodge_timer = maxf(0.0, dodge_timer - delta)
 	invulnerable_timer = maxf(0.0, invulnerable_timer - delta)
-	boss_telegraph_timer = maxf(0.0, boss_telegraph_timer - delta)
 	player_fatigue = minf(MAX_FATIGUE, player_fatigue + delta * fatigue_regen)
 	if selected_weapon == "sword" and sword_controller:
 		sword_controller.process_weapon(delta)
@@ -567,18 +672,42 @@ func _process(delta: float) -> void:
 		if bow_state_label:
 			bow_state_label.text = "BOW  •  CHARGING %d%%  •  RELEASE DOWN TO FIRE" % roundi(bow_charge * 100.0)
 	move_player(delta)
-	if not stop_monster:
-		update_boss(delta)
+	if not stop_monster and boss_controller:
+		boss_controller.process_boss(delta)
 	update_camera(delta)
 	update_bars()
 	if health_bar:
 		health_bar.value = player_health
 	if fatigue_bar:
 		fatigue_bar.value = player_fatigue
+	if debug_mode and boss_controller:
+		_refresh_bench_label()
+		_update_boss_hitbox_visual(delta)
 	if player_health <= 0.0:
-		finish_fight(false)
+		if debug_mode:
+			player_health = MAX_HEALTH
+			player_fatigue = MAX_FATIGUE
+			set_status("BENCH  •  YOU DIED  •  RESET")
+		else:
+			finish_fight(false)
 	elif boss_health <= 0.0:
-		finish_fight(true)
+		if debug_mode:
+			boss_health = boss_definition.max_health
+			boss_controller.refresh_phase()
+			set_status("BENCH  •  BOSS DEFEATED  •  RESET")
+		else:
+			finish_fight(true)
+
+## Bench readout: boss state, current move, telegraph countdown.
+func _refresh_bench_label() -> void:
+	if debug_boss_label == null or not boss_controller:
+		return
+	var states := ["STALK", "TELEGRAPH", "ACTIVE", "RECOVER"]
+	var move_text := boss_controller.picked_move.display_name if boss_controller.picked_move else "—"
+	var text := "%s\n%s  •  %s" % [boss_controller.definition.display_name.to_upper(), states[boss_controller.state], move_text]
+	if boss_controller.state == BossController.State.TELEGRAPH:
+		text += "\n%.2fs LEFT" % boss_controller.telegraph_timer
+	debug_boss_label.text = text
 
 func update_bars() -> void:
 	if health_bar:
@@ -633,28 +762,6 @@ func move_player(delta: float) -> void:
 		var desired_yaw := atan2(-direction.x, -direction.z)
 		player.rotation.y = rotate_toward(player.rotation.y, desired_yaw, PLAYER_TURN_SPEED * delta)
 		facing_direction = -player.global_transform.basis.z
-
-func update_boss(delta: float) -> void:
-	var distance := boss.global_position.distance_to(player.global_position)
-	if not boss_attacking and distance > 2.4:
-		var direction := boss.global_position.direction_to(player.global_position)
-		var boss_speed := 1.3 if boss_phase == 0 else (1.0 if boss_phase == 1 else 0.7)
-		boss.velocity = direction * boss_speed
-		boss.move_and_slide()
-		boss.look_at(Vector3(player.global_position.x, boss.global_position.y, player.global_position.z), Vector3.UP)
-	else:
-		boss.velocity = Vector3.ZERO
-	boss_attack_timer -= delta
-	if boss_attack_timer <= 0.0 and not boss_attacking:
-		boss_attacking = true
-		boss_telegraph_timer = 0.75 if boss_phase == 0 else (0.62 if boss_phase == 1 else 0.5)
-		boss_attack_timer = 2.8 if boss_phase == 0 else (2.35 if boss_phase == 1 else 1.95)
-		status_label.text = "DANGER  •  GRAVE BRUTE IS COMMITTING TO A STRIKE"
-	if boss_attacking and boss_telegraph_timer <= 0.0:
-		boss_attacking = false
-		if distance < 3.0 and invulnerable_timer <= 0.0:
-			player_health -= 18.0
-			set_status("HIT • DODGE THROUGH THE ATTACK")
 
 func update_camera(delta: float) -> void:
 	if not camera or not player:
@@ -793,7 +900,7 @@ func _on_arrow_struck(body: Node, damage: float) -> void:
 	if body == boss:
 		boss_health -= damage
 		status_label.text = "ARROW HIT  •  %d DAMAGE" % roundi(damage)
-		update_boss_phase()
+		boss_controller.refresh_phase()
 
 func fire_quick_bow(to_right: bool) -> void:
 	if attack_timer > 0.0 or player_fatigue < 16.0:
@@ -816,7 +923,7 @@ func perform_bow_bash() -> void:
 	show_attack_hitbox(facing_direction, 1)
 	if player.global_position.distance_to(boss.global_position) < 2.4:
 		boss_health -= 14.0
-		update_boss_phase()
+		boss_controller.refresh_phase()
 
 func _on_two_finger_swipe(axis: String, direction: int) -> void:
 	if axis == "vertical":
@@ -858,16 +965,14 @@ func deal_boss_damage(amount: float, push := 0.25) -> void:
 		return
 	boss_health -= amount
 	boss.position += player.global_position.direction_to(boss.global_position) * push
-	update_boss_phase()
+	boss_controller.refresh_phase()
 
-## Trip finisher: staggers the boss and interrupts a committed strike.
-func apply_trip() -> void:
-	if not is_instance_valid(boss):
+## Boss strikes land through here: dodge invulnerability, health, message.
+func take_boss_hit(amount: float) -> void:
+	if invulnerable_timer > 0.0:
 		return
-	boss_attacking = false
-	boss_telegraph_timer = 0.0
-	boss_attack_timer = maxf(boss_attack_timer, 2.2)
-	set_status("TRIPPED • GRAVE BRUTE STAGGERS")
+	player_health -= amount
+	set_status("HIT • DODGE THROUGH THE ATTACK")
 
 func defensive_step(step: String) -> void:
 	dodge_direction = -facing_direction if step == "back" else (Vector3(-facing_direction.z, 0, facing_direction.x) if step == "right" else Vector3(facing_direction.z, 0, -facing_direction.x))
@@ -934,6 +1039,8 @@ func _refresh_chain_pips(chain: TempoChain, zone: String) -> void:
 		chain_pips[index].color = color
 
 func show_whirlwind_hitbox(clockwise: bool) -> void:
+	if not debug_mode:
+		return
 	if not is_instance_valid(player) or not player.is_inside_tree() or not player.get_parent():
 		return
 	var hitbox := MeshInstance3D.new()
@@ -953,28 +1060,6 @@ func show_whirlwind_hitbox(clockwise: bool) -> void:
 	var rotation_tween := create_tween()
 	rotation_tween.tween_property(hitbox, "rotation:y", TAU if clockwise else -TAU, 0.65)
 	get_tree().create_timer(0.72).timeout.connect(hitbox.queue_free)
-func update_boss_phase() -> void:
-	var next_phase := 0
-	if boss_health <= 105.0:
-		next_phase = 1
-	if boss_health <= 52.0:
-		next_phase = 2
-	if next_phase == boss_phase or not boss:
-		return
-	boss_phase = next_phase
-	var body := boss.get_node("Body") as MeshInstance3D
-	var material := StandardMaterial3D.new()
-	material.roughness = 0.88
-	if boss_phase == 1:
-		material.albedo_color = Color("#b36d46")
-		boss.rotation_degrees.z = -5.0
-		boss_state_label.text = "GRAVE BRUTE  •  WOUNDED  •  ATTACKS ACCELERATE"
-	elif boss_phase == 2:
-		material.albedo_color = Color("#613f4b")
-		boss.rotation_degrees.z = -12.0
-		boss_state_label.text = "GRAVE BRUTE  •  IMPAIRED  •  MOVEMENT DAMAGED"
-	body.material_override = material
-
 func animate_sword_attack(direction: Vector2) -> void:
 	if not is_instance_valid(player_weapon) or not player_weapon.is_inside_tree():
 		return
@@ -991,6 +1076,8 @@ func animate_sword_attack(direction: Vector2) -> void:
 	tween.tween_property(player_weapon, "rotation_degrees", Vector3(0, 0, -45), 0.24)
 
 func show_attack_hitbox(direction: Vector3, combo_index: int) -> void:
+	if not debug_mode:
+		return
 	if not is_instance_valid(player) or not player.is_inside_tree() or not player.get_parent():
 		return
 	var hitbox := MeshInstance3D.new()
@@ -1009,6 +1096,64 @@ func show_attack_hitbox(direction: Vector3, combo_index: int) -> void:
 	get_tree().create_timer(0.2).timeout.connect(hitbox.queue_free)
 	if debug_label:
 		debug_label.text = "DEBUG  •  YELLOW HITBOX  •  %s  •  COMBO %d" % [direction, combo_index]
+
+## Bench-only boss hitbox: a translucent boss-red box in front of the boss
+## while he telegraphs/strikes. It lingers the move's hitbox_lifetime after the
+## active window so you can study where a landing actually lands (freeze him in
+## the bench to hold the telegraph open).
+func _update_boss_hitbox_visual(delta: float) -> void:
+	if not debug_mode or boss_controller == null or not is_instance_valid(boss) or boss_controller.picked_move == null:
+		_free_boss_hitbox()
+		return
+	var move := boss_controller.picked_move
+	var holding := boss_controller.state == BossController.State.TELEGRAPH or boss_controller.state == BossController.State.ACTIVE
+	if holding:
+		boss_hitbox_stay = move.hitbox_lifetime
+	elif boss_hitbox_stay >	 0.0:
+		boss_hitbox_stay -= delta
+	if not holding and boss_hitbox_stay <=	 0.0:
+		_free_boss_hitbox()
+		return
+	if boss_hitbox == null:
+		boss_hitbox = MeshInstance3D.new()
+		boss_hitbox.name = "DebugBossHitbox"
+		var hit_mesh: PrimitiveMesh
+		match move.hitbox_shape:
+			0:
+				var sphere := SphereMesh.new()
+				sphere.radius = maxf(move.hitbox_size.x, move.hitbox_size.z) * 0.5
+				sphere.height = move.hitbox_size.y
+				hit_mesh = sphere
+			1:
+				var box := BoxMesh.new()
+				box.size = move.hitbox_size
+				hit_mesh = box
+			_:
+				var capsule := CapsuleMesh.new()
+				capsule.radius = maxf(move.hitbox_size.x, move.hitbox_size.z) * 0.5
+				capsule.height = maxf(move.hitbox_size.y, 0.1)
+				hit_mesh = capsule
+		boss_hitbox.mesh = hit_mesh
+		var hit_material := StandardMaterial3D.new()
+		hit_material.albedo_color = Color(0.75, 0.35, 0.29, 0.35)
+		hit_material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		hit_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		boss_hitbox.material_override = hit_material
+		boss.get_parent().add_child(boss_hitbox)
+	var forward := boss.global_position.direction_to(player.global_position)
+	forward.y =	0.0
+	if forward.length() >	 0.01:
+		forward = forward.normalized()
+	else:
+		forward = Vector3.FORWARD
+	boss_hitbox.global_position = boss.global_position + forward * (move.hitbox_size.z * 0.55 +	 0.2) + Vector3(0, move.hitbox_size.y *	 0.5, 0)
+	boss_hitbox.look_at(boss_hitbox.global_position + forward, Vector3.UP)
+
+func _free_boss_hitbox() -> void:
+	if boss_hitbox:
+		boss_hitbox.queue_free()
+		boss_hitbox = null
+	boss_hitbox_stay =	 0.0
 
 func dodge_player() -> void:
 	if dodge_timer > 0.0 or player_fatigue < 20.0:

@@ -13,6 +13,9 @@ var flurry_ticks := 0
 var flurry_timer := 0.0
 var flurry_tick_damage := 0.0
 var flurry_popup_emitted := false
+## Per-tick damage straight from the attack's hits list (empty = even split).
+var flurry_damages: Array[float] = []
+var flurry_index := 0
 
 func _process_tick(delta: float) -> void:
 	super(delta)
@@ -29,17 +32,24 @@ func _flurry_tick() -> void:
 		return
 	main.show_attack_hitbox(main.facing_direction, 2)
 	if main.boss_distance() < 3.3 and main.boss_in_front():
-		main.deal_boss_damage(flurry_tick_damage, 0.1)
+		var tick_damage := flurry_tick_damage
+		if flurry_index < flurry_damages.size():
+			tick_damage = flurry_damages[flurry_index]
+		flurry_index += 1
+		main.deal_boss_damage(tick_damage, 0.1)
 		if not flurry_popup_emitted:
 			flurry_popup_emitted = true
 			main.spawn_hit_popup(quality_text())
 
 func _execute_move(attack_data: AttackDefinition, technique: String) -> void:
-	var is_whirlwind := attack_data.finisher_id == "whirlwind"
+	var is_whirlwind := attack_data.animation_id == "whirlwind"
 	if is_whirlwind:
 		main.show_whirlwind_hitbox(last_clockwise)
 	var amount := attack_data.damage * _damage_multiplier(attack_data)
-	main.animate_sword_attack(_direction_vector(technique))
+	var swing := technique
+	if attack_data.animation_id.begins_with("slash_"):
+		swing = attack_data.animation_id.trim_prefix("slash_").to_upper()
+	main.animate_sword_attack(_direction_vector(swing))
 	main.show_attack_hitbox(main.facing_direction, tempo.slot())
 	status_message.emit("CHAIN %d/3%s • %s" % [tempo.slot(), _quality_tag(), attack_data.display_name])
 	var reach := 3.5 if is_whirlwind else 3.0
@@ -57,18 +67,15 @@ func _quality_tag() -> String:
 func _execute_finisher(attack_data: AttackDefinition, technique: String) -> void:
 	var quality := quality_text()
 	var tier_factor := TempoChain.quick_scale if tempo.tier == TempoChain.TIER_QUICK else 1.0
-	match attack_data.finisher_id:
+	var behavior := attack_data.animation_id
+	match behavior:
 		"flurry":
 			status_message.emit("CHAIN 3/3 • FLURRY FINISHER%s" % _quality_tag())
-			flurry_ticks = FLURRY_TICKS
+			_build_flurry_ticks(attack_data, tier_factor)
 			flurry_timer = 0.33
-			flurry_tick_damage = attack_data.damage * tier_factor / float(FLURRY_TICKS)
 			flurry_popup_emitted = false
 			main.animate_sword_attack(Vector2.RIGHT)
 			main.show_attack_hitbox(main.facing_direction, 3)
-		"back_step":
-			main.defensive_step("back")
-			status_message.emit("CHAIN 3/3 • BACK STEP FINISHER • INVULNERABLE")
 		"whirlwind":
 			main.show_whirlwind_hitbox(last_clockwise)
 			if main.boss_distance() < 3.5 and main.boss_in_front():
@@ -82,6 +89,38 @@ func _execute_finisher(attack_data: AttackDefinition, technique: String) -> void
 				main.deal_boss_damage(attack_data.damage * tier_factor, 0.45)
 				main.spawn_hit_popup(quality)
 			status_message.emit("CHAIN 3/3 • HEAVY SLASH FINISHER%s" % _quality_tag())
+
+## One automatic combo step: play the animation and land the hit, no tempo
+## timing. The opening hit's quality carries down; a skill step is handled by
+## the base controller.
+func _execute_follow_up(entry: AttackDefinition, quality: String) -> void:
+	var tier_factor := TempoChain.quick_scale if quality == "WEAK" else 1.0
+	var swing := "D"
+	if entry.animation_id.begins_with("slash_"):
+		swing = entry.animation_id.trim_prefix("slash_").to_upper()
+	main.animate_sword_attack(_direction_vector(swing))
+	main.show_attack_hitbox(main.facing_direction, 1)
+	if main.boss_in_front() and main.boss_distance() < 3.0:
+		main.deal_boss_damage(entry.damage * tier_factor, 0.25)
+	main.spawn_hit_popup(quality)
+	var tag := "" if quality == "" else " • %s" % quality
+	status_message.emit("FOLLOW-UP • %s%s" % [entry.display_name, tag])
+
+## Turns the attack's hits list into this flurry's tick damage. An empty list
+## falls back to FLURRY_TICKS even ticks of the attack's total damage.
+func _build_flurry_ticks(attack_data: AttackDefinition, tier_factor: float) -> void:
+	flurry_damages.clear()
+	flurry_index = 0
+	if not attack_data.hits.is_empty():
+		for hit in attack_data.hits:
+			flurry_damages.append(hit.damage * tier_factor)
+		flurry_ticks = attack_data.hits.size()
+	else:
+		flurry_ticks = FLURRY_TICKS
+		var even := attack_data.damage * tier_factor / float(FLURRY_TICKS)
+		for i in FLURRY_TICKS:
+			flurry_damages.append(even)
+	flurry_tick_damage = attack_data.damage * tier_factor / float(maxi(flurry_ticks, 1))
 
 ## Dodge roll-cancel during recovery.
 func cancel_for_dodge() -> void:

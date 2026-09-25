@@ -1,0 +1,8 @@
+[gd_resource type="Resource" script_class="SkillDefinition" format=3 uid="uid://d1ot0uvkqxml2"]
+
+[ext_resource type="Script" uid="uid://6cn8m36effig" path="res://scripts/skill_definition.gd" id="1_rpjn2"]
+
+[resource]
+script = ExtResource("1_rpjn2")
+skill_id = "new_skill_1"
+display_name = "New Skill"

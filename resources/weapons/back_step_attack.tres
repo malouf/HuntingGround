@@ -1,0 +1,16 @@
+[gd_resource type="Resource" script_class="AttackDefinition" format=3 uid="uid://dr3dcjxubpnow"]
+
+[ext_resource type="Script" uid="uid://2xvg77fcu6rp" path="res://scripts/attack_follow_up.gd" id="1_8xggb"]
+[ext_resource type="Script" uid="uid://opqglp7pn0ot" path="res://scripts/attack_hit.gd" id="2_q38p4"]
+[ext_resource type="Script" uid="uid://k56pip1w7cxd" path="res://scripts/attack_definition.gd" id="3_htqfk"]
+[ext_resource type="Resource" path="res://resources/skills/back_step.tres" id="4_ied7d"]
+
+[resource]
+script = ExtResource("3_htqfk")
+attack_id = "back_step_attack"
+display_name = "Back Step"
+chain_stage = 2
+skill = ExtResource("4_ied7d")
+link_open = 99.0
+link_close = 99.0
+chains = false

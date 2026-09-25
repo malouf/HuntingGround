@@ -1,0 +1,38 @@
+[gd_resource type="Resource" script_class="BossDefinition" format=3]
+
+[ext_resource type="Script" path="res://scripts/boss/boss_move.gd" id="1_8aqmm"]
+[ext_resource type="Script" path="res://scripts/boss/boss_definition.gd" id="1_def"]
+[ext_resource type="Resource" path="res://resources/bosses/grave_brute_strike.tres" id="3_8aqmm"]
+[ext_resource type="Script" path="res://scripts/boss/boss_phase.gd" id="3_phase"]
+
+[sub_resource type="Resource" id="Resource_fresh"]
+script = ExtResource("3_phase")
+body_color = Color(0.552941, 0.317647, 0.301961, 1)
+
+[sub_resource type="Resource" id="Resource_wounded"]
+script = ExtResource("3_phase")
+hp_below = 0.65625
+walk_speed = 1.0
+attack_cadence = 2.35
+attack_speed = 1.21
+body_color = Color(0.701961, 0.427451, 0.27451, 1)
+tilt_degrees = -5.0
+state_text = "WOUNDED  •  ATTACKS ACCELERATE"
+
+[sub_resource type="Resource" id="Resource_impaired"]
+script = ExtResource("3_phase")
+hp_below = 0.325
+walk_speed = 0.7
+attack_cadence = 1.95
+attack_speed = 1.5
+body_color = Color(0.380392, 0.247059, 0.294118, 1)
+tilt_degrees = -12.0
+state_text = "IMPAIRED  •  MOVEMENT DAMAGED"
+
+[resource]
+script = ExtResource("1_def")
+boss_id = "grave_brute"
+display_name = "Grave Brute"
+notes = "Closes distance, telegraphs a committed melee strike, punishes staying in range. Reads its condition from body color, posture and cadence."
+moves = Array[ExtResource("1_8aqmm")]([ExtResource("3_8aqmm")])
+phases = Array[ExtResource("3_phase")]([SubResource("Resource_fresh"), SubResource("Resource_wounded"), SubResource("Resource_impaired")])

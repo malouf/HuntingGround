@@ -1,14 +1,16 @@
-[gd_resource type="Resource" script_class="WeaponDefinition" load_steps=10 format=3]
+[gd_resource type="Resource" script_class="WeaponDefinition" format=3]
 
 [ext_resource type="Script" path="res://scripts/weapon_definition.gd" id="1_def"]
+[ext_resource type="Resource" path="res://resources/weapons/back_step_attack.tres" id="2_iqahs"]
 [ext_resource type="Resource" path="res://resources/weapons/slash_left.tres" id="2_l"]
 [ext_resource type="Resource" path="res://resources/weapons/slash_right.tres" id="3_r"]
+[ext_resource type="Resource" path="res://resources/skills/back_step.tres" id="4_6alyb"]
 [ext_resource type="Resource" path="res://resources/weapons/thrust.tres" id="4_u"]
 [ext_resource type="Resource" path="res://resources/weapons/back_cut.tres" id="5_d"]
 [ext_resource type="Resource" path="res://resources/weapons/heavy_slash.tres" id="6_heavy"]
 [ext_resource type="Resource" path="res://resources/weapons/flurry.tres" id="7_flurry"]
-[ext_resource type="Resource" path="res://resources/weapons/back_step.tres" id="8_step"]
 [ext_resource type="Resource" path="res://resources/weapons/whirlwind.tres" id="9_ww"]
+[ext_resource type="Script" path="res://scripts/skill_definition.gd" id="10_qs2b1"]
 
 [resource]
 script = ExtResource("1_def")
@@ -16,17 +18,17 @@ weapon_id = "hunter_sword"
 display_name = "Hunter's Sword"
 model_path = "res://scenes/weapons/sword.tscn"
 notes = "Tempo chain: catch the yellow beat for full power; the 3rd input is always a finisher."
-min_fatigue = 12.0
 moves = {
-	"L": ExtResource("2_l"),
-	"R": ExtResource("3_r"),
-	"U": ExtResource("4_u"),
-	"D": ExtResource("5_d")
+"D": ExtResource("5_d"),
+"L": ExtResource("2_l"),
+"R": ExtResource("3_r"),
+"U": ExtResource("4_u")
 }
 finishers = {
-	"L": ExtResource("6_heavy"),
-	"R": ExtResource("6_heavy"),
-	"U": ExtResource("7_flurry"),
-	"D": ExtResource("8_step")
+"D": ExtResource("2_iqahs"),
+"L": ExtResource("6_heavy"),
+"R": ExtResource("6_heavy"),
+"U": ExtResource("7_flurry")
 }
 circle_move = ExtResource("9_ww")
+skills = Array[ExtResource("10_qs2b1")]([ExtResource("4_6alyb")])

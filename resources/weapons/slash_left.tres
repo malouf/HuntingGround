@@ -1,6 +1,8 @@
-[gd_resource type="Resource" script_class="AttackDefinition" load_steps=2 format=3]
+[gd_resource type="Resource" script_class="AttackDefinition" format=3]
 
+[ext_resource type="Script" path="res://scripts/attack_follow_up.gd" id="1_630u4"]
 [ext_resource type="Script" path="res://scripts/attack_definition.gd" id="1_attack"]
+[ext_resource type="Script" path="res://scripts/attack_hit.gd" id="2_sirts"]
 
 [resource]
 script = ExtResource("1_attack")
@@ -8,13 +10,10 @@ attack_id = "slash_left"
 display_name = "Left Slash"
 damage = 20.0
 fatigue_cost = 12.0
-recovery = 0.5
+recovery = 0.39347060111809207
 hitbox_size = Vector3(2, 1.4, 2.5)
+notes = "Light horizontal cut for chain slots 1 and 2."
 windup = 0.14
-active = 0.1
 link_open = 0.26
 link_close = 0.62
-chain_scale = Vector3(1, 1.25, 1.6)
-chains = true
-finisher_id = ""
-notes = "Light horizontal cut for chain slots 1 and 2."
+animation_id = "slash_l"

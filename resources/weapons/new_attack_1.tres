@@ -1,0 +1,14 @@
+[gd_resource type="Resource" script_class="AttackDefinition" format=3 uid="uid://c3v8b2yawby5c"]
+
+[ext_resource type="Script" uid="uid://2xvg77fcu6rp" path="res://scripts/attack_follow_up.gd" id="1_42my2"]
+[ext_resource type="Script" uid="uid://opqglp7pn0ot" path="res://scripts/attack_hit.gd" id="2_56ked"]
+[ext_resource type="Script" uid="uid://k56pip1w7cxd" path="res://scripts/attack_definition.gd" id="3_o7uj7"]
+
+[resource]
+script = ExtResource("3_o7uj7")
+attack_id = "new_attack_1"
+display_name = "New Attack"
+chain_stage = 1
+fatigue_cost = 12.0
+recovery = 0.5
+animation_id = "slash_l"

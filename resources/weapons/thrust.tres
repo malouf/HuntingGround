@@ -1,6 +1,8 @@
-[gd_resource type="Resource" script_class="AttackDefinition" load_steps=2 format=3]
+[gd_resource type="Resource" script_class="AttackDefinition" format=3]
 
 [ext_resource type="Script" path="res://scripts/attack_definition.gd" id="1_attack"]
+[ext_resource type="Script" path="res://scripts/attack_follow_up.gd" id="1_eu8vc"]
+[ext_resource type="Script" path="res://scripts/attack_hit.gd" id="2_u51t0"]
 
 [resource]
 script = ExtResource("1_attack")
@@ -10,11 +12,8 @@ damage = 28.0
 fatigue_cost = 18.0
 recovery = 0.6
 hitbox_size = Vector3(1.4, 1.4, 3.2)
+notes = "Heavy committed thrust for chain slots 1 and 2."
 windup = 0.22
-active = 0.1
 link_open = 0.34
 link_close = 0.72
-chain_scale = Vector3(1, 1.25, 1.6)
-chains = true
-finisher_id = ""
-notes = "Heavy committed thrust for chain slots 1 and 2."
+animation_id = "slash_u"

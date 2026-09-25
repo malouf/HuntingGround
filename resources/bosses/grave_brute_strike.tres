@@ -1,0 +1,10 @@
+[gd_resource type="Resource" script_class="BossMove" format=3 uid="uid://bcrj7fsxmww71"]
+
+[ext_resource type="Script" uid="uid://cvrjoavna525t" path="res://scripts/boss/boss_follow_up.gd" id="1_p0h1k"]
+[ext_resource type="Script" uid="uid://bxbq47bor8nr4" path="res://scripts/boss/boss_move.gd" id="1_strike"]
+
+[resource]
+script = ExtResource("1_strike")
+move_id = "committed_strike"
+display_name = "Committed Strike"
+notes = "Plants and swings. No active window or recovery: the hit lands the moment the telegraph ends, and the boss is free to move again."
